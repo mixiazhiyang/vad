@@ -1,2 +1,2 @@
 # vad
-coding based on others' research
+MicroSoft:https://arxiv.org/abs/2102.07445
