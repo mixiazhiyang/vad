@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 import librosa
-
+from tensorboardX import SummaryWriter
+import torchsummary
 
 class Light(nn.Module):
     def __init__(self, ):
@@ -17,60 +18,74 @@ class Light(nn.Module):
 
         """
         super().__init__()
-        self.conv = [nn.Conv2d(in_channels=int(2**(i-1)*16),
-                               out_channels=2**i *16,
-                               kernel_size=(3, 2),
-                               stride=(2, 1),
-                               bias=False) for i in range(4)]
-        self.conv[0]=nn.Conv2d(in_channels=1,
-                               out_channels=16,
-                               kernel_size=(3, 2),
-                               stride=(2, 1),
-                               bias=False)
-        self.pad=nn.ZeroPad2d(padding=(1,1,1,0))
+        self.conv1 = nn.Conv2d(in_channels=1,out_channels=16,kernel_size=(3, 2),stride=(2, 1),bias=False,)
+        self.conv2 = nn.Conv2d(in_channels=16,out_channels=32,kernel_size=(3, 2),stride=(2, 1),bias=False,)
+        self.conv3 = nn.Conv2d(in_channels=32,out_channels=64,kernel_size=(3, 2),stride=(2, 1),bias=False,)
+        self.conv4 = nn.Conv2d(in_channels=64,out_channels=128,kernel_size=(3, 2),stride=(2, 1),bias=False,)
+
+        self.pad=nn.ZeroPad2d(padding=(1,0,1,1))
         self.flat=nn.Flatten(start_dim=1,end_dim=2)
         self.gru=nn.GRU(input_size=512,hidden_size=512,num_layers=1,bias=True,batch_first=True,)
         self.fc1=nn.Linear(512,256)
         self.fc2=nn.Linear(256,2)# change to 1 if you only estimate one feature
-        self.actP = [nn.PReLU(2**i*16) for i in range(4)]
-        self.actP1=nn.PReLU(256)
+        self.actP1=nn.PReLU(16)
+        self.actP2=nn.PReLU(32)
+        self.actP3=nn.PReLU(64)
+        self.actP4=nn.PReLU(128)
+        self.actP5=nn.PReLU(256)
         self.actS = nn.Sigmoid()
         self.actT = nn.Tanh()
 
-    def forward(self, input_data):
-        # 10s的语音，32ms窗，16ms shift
-        x=0
-        for i in range(4):
-            if i==0:
-                x = self.pad(input_data)
-            else:
-                x = self.pad(x)
-            x=self.conv[i](x)
-            x=self.actP[i](x)
+    def forward(self, x):
+        x=self.pad(x)
+        x=self.conv1(x)
+        x=self.actP1(x)
+
+        x = self.pad(x)
+        x = self.conv2(x)
+        x = self.actP2(x)
+
+        x = self.pad(x)
+        x = self.conv3(x)
+        x = self.actP3(x)
+
+        x = self.pad(x)
+        x = self.conv4(x)
+        x = self.actP4(x)
+
         x=self.flat(x)
         x = torch.swapdims(x, 1, 2)
-        print(x.shape)
         x,_=self.gru(x)
-        x=self.actT(x)# 不确定是sigmoid还是tanh
+        x=self.actT(x)
         x=self.fc1(x)
         x = torch.swapdims(x, 1, 2)
-        x = self.actP1(x)
+        x = self.actP5(x)
         x = torch.swapdims(x, 1, 2)
         x=self.fc2(x)
         x=self.actS(x)
         return x
 
 
-t=10
+t=30
 sr=16000
 audio=np.random.random([t*sr,])
 win_t= 32 / 1000
-hop_t= 16 / 1000
-
-melS=librosa.feature.mfcc(y=audio, sr=sr, win_length=int(win_t * sr), hop_length=int(hop_t * sr), n_mfcc=64, fmin=0, fmax=8000)
+hop_t= 30 / 1000
+win_l=int(win_t*sr)
+hop_l=int(hop_t*sr)
+audio = np.pad(audio, pad_width=(hop_l, 0), mode='edge')
+melS=librosa.feature.mfcc(y=audio, sr=sr, win_length=int(win_t * sr), hop_length=int(hop_t * sr), n_mfcc=64, fmin=0, fmax=8000,center=True)
+print(melS.shape)
+melS=melS[:,1:-2]
+print(melS.shape)
 stft=torch.Tensor(melS)
 stft=torch.unsqueeze(stft,0)
-stft=torch.unsqueeze(stft,0)
 model=Light()
-out=model(stft)
+writer=SummaryWriter('run/test')
+writer.add_graph(model,stft.unsqueeze(0),verbose=True)
+for name, param in model.named_parameters():  # 查看可优化的参数有哪些
+    if param.requires_grad:
+        print(name)
+torchsummary.summary(model,input_size=stft.shape,batch_size=1,device='cpu')
+out=model(stft.unsqueeze(0))
 print(out.shape)
